@@ -7,6 +7,7 @@
     <uses-permission android:name="android.permission.POST_NOTIFICATIONS" />
     <uses-permission android:name="android.permission.RECORD_AUDIO" />
     <uses-permission android:name="android.permission.INTERNET" />
+    <uses-permission android:name="android.permission.SYSTEM_ALERT_WINDOW" />
 
     <application
         android:name=".VoiceReaderApp"
@@ -45,6 +46,11 @@
             android:name=".service.VoiceAgentService"
             android:exported="false"
             android:foregroundServiceType="specialUse" />
+
+        <!-- Floating overlay bubble for status -->
+        <service
+            android:name=".overlay.FloatingBubbleService"
+            android:exported="false" />
 
     </application>
 </manifest>

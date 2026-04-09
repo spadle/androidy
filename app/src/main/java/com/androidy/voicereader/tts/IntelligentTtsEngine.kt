@@ -60,6 +60,11 @@ class IntelligentTtsEngine @Inject constructor(
     val currentSegmentIndex: StateFlow<Int> = _currentSegmentIndex
 
     private var currentJob: Job? = null
+    private var lastResult: AnnotatedReadingResult? = null
+    private var pausedAtIndex: Int = -1
+
+    private val _isPaused = MutableStateFlow(false)
+    val isPaused: StateFlow<Boolean> = _isPaused
 
     /** Initialize the TTS engine. */
     suspend fun initialize() = suspendCoroutine { cont ->
@@ -105,6 +110,8 @@ class IntelligentTtsEngine @Inject constructor(
         }
 
         stop() // Stop any current speech
+        lastResult = result
+        _isPaused.value = false
 
         currentJob = scope.launch {
             val readable = result.readableSegments
@@ -226,13 +233,67 @@ class IntelligentTtsEngine @Inject constructor(
         }
     }
 
+    fun pause() {
+        if (_isSpeaking.value && !_isPaused.value) {
+            pausedAtIndex = _currentSegmentIndex.value
+            currentJob?.cancel()
+            currentJob = null
+            tts?.stop()
+            utteranceQueue.clear()
+            _isSpeaking.value = false
+            _isPaused.value = true
+            Log.d(TAG, "Paused at segment $pausedAtIndex")
+        }
+    }
+
+    fun resume(scope: CoroutineScope) {
+        val result = lastResult ?: return
+        if (!_isPaused.value || pausedAtIndex < 0) return
+
+        _isPaused.value = false
+        val startIndex = pausedAtIndex
+
+        currentJob = scope.launch {
+            val readable = result.readableSegments
+
+            for (index in startIndex until readable.size) {
+                if (!isActive) break
+
+                _currentSegmentIndex.value = index
+                speakSegment(readable[index], "utterance_resume_$index")
+                waitForUtteranceComplete("utterance_resume_$index")
+
+                if (index < readable.size - 1) {
+                    delay(getPauseDuration(readable[index].type, readable.getOrNull(index + 1)?.type))
+                }
+            }
+
+            _currentSegmentIndex.value = -1
+            _isSpeaking.value = false
+            pausedAtIndex = -1
+        }
+        Log.d(TAG, "Resumed from segment $startIndex")
+    }
+
+    fun replay(scope: CoroutineScope) {
+        val result = lastResult ?: return
+        _isPaused.value = false
+        pausedAtIndex = -1
+
+        scope.launch {
+            speakAnnotatedResult(result, scope)
+        }
+    }
+
     fun stop() {
         currentJob?.cancel()
         currentJob = null
         tts?.stop()
         utteranceQueue.clear()
         _isSpeaking.value = false
+        _isPaused.value = false
         _currentSegmentIndex.value = -1
+        pausedAtIndex = -1
     }
 
     fun release() {

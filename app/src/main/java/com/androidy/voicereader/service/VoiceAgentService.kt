@@ -13,7 +13,9 @@ import android.util.Log
 import androidx.core.app.NotificationCompat
 import com.androidy.voicereader.R
 import com.androidy.voicereader.accessibility.ScreenReaderAccessibilityService
+import com.androidy.voicereader.data.ReadingHistoryDao
 import com.androidy.voicereader.llm.GemmaLlmEngine
+import com.androidy.voicereader.overlay.FloatingBubbleService
 import com.androidy.voicereader.pipeline.ReadingPipeline
 import com.androidy.voicereader.tts.IntelligentTtsEngine
 import com.androidy.voicereader.ui.MainActivity
@@ -59,6 +61,7 @@ class VoiceAgentService : Service() {
     // These will be injected from the activity that binds
     var llmEngine: GemmaLlmEngine? = null
     var ttsEngine: IntelligentTtsEngine? = null
+    var historyDao: ReadingHistoryDao? = null
 
     private val _agentStatus = MutableStateFlow("Idle")
     val agentStatus: StateFlow<String> = _agentStatus
@@ -77,6 +80,7 @@ class VoiceAgentService : Service() {
 
         startVoiceListening()
         observeCommands()
+        observePipelineState()
 
         return START_STICKY
     }
@@ -98,6 +102,14 @@ class VoiceAgentService : Service() {
         }
     }
 
+    private fun observePipelineState() {
+        scope.launch {
+            pipeline?.pipelineState?.collect { state ->
+                FloatingBubbleService.updateState(FloatingBubbleService.fromPipelineState(state))
+            }
+        }
+    }
+
     private suspend fun handleCommand(command: VoiceCommand) {
         val llm = llmEngine
         val tts = ttsEngine
@@ -107,8 +119,31 @@ class VoiceAgentService : Service() {
             return
         }
 
+        // Handle playback control commands immediately (no pipeline needed)
+        when (command.type) {
+            CommandType.PAUSE -> {
+                tts.pause()
+                _agentStatus.value = "Paused"
+                updateNotification("Paused")
+                return
+            }
+            CommandType.RESUME -> {
+                tts.resume(scope)
+                _agentStatus.value = "Resumed reading"
+                updateNotification("Reading...")
+                return
+            }
+            CommandType.REPLAY -> {
+                tts.replay(scope)
+                _agentStatus.value = "Replaying"
+                updateNotification("Replaying...")
+                return
+            }
+            else -> { /* fall through to pipeline */ }
+        }
+
         if (pipeline == null) {
-            pipeline = ReadingPipeline(llm, tts)
+            pipeline = ReadingPipeline(llm, tts, historyDao)
         }
 
         _agentStatus.value = "Processing: \"${command.rawText}\""

@@ -3,6 +3,8 @@ package com.androidy.voicereader.pipeline
 import android.util.Log
 import com.androidy.voicereader.accessibility.ExtractedContent
 import com.androidy.voicereader.accessibility.ScreenReaderAccessibilityService
+import com.androidy.voicereader.data.ReadingHistoryDao
+import com.androidy.voicereader.data.ReadingHistoryEntry
 import com.androidy.voicereader.llm.AnnotatedReadingResult
 import com.androidy.voicereader.llm.GemmaLlmEngine
 import com.androidy.voicereader.service.CommandType
@@ -13,6 +15,8 @@ import kotlinx.coroutines.flow.MutableStateFlow
 import kotlinx.coroutines.flow.StateFlow
 import kotlinx.coroutines.flow.first
 import kotlinx.coroutines.withTimeoutOrNull
+import org.json.JSONArray
+import org.json.JSONObject
 
 /**
  * Orchestrates the full reading pipeline:
@@ -22,7 +26,8 @@ import kotlinx.coroutines.withTimeoutOrNull
  */
 class ReadingPipeline(
     private val llmEngine: GemmaLlmEngine,
-    private val ttsEngine: IntelligentTtsEngine
+    private val ttsEngine: IntelligentTtsEngine,
+    private val historyDao: ReadingHistoryDao? = null
 ) {
     companion object {
         private const val TAG = "ReadingPipeline"
@@ -66,6 +71,7 @@ class ReadingPipeline(
                 CommandType.SUMMARIZE -> "Summarize the main points of this content. ${command.additionalContext}"
                 CommandType.READ -> "Read this content intelligently, emphasizing important parts. ${command.additionalContext}"
                 CommandType.ACTIVATE -> "Read the main content on screen. ${command.additionalContext}"
+                CommandType.PAUSE, CommandType.RESUME, CommandType.REPLAY -> return // handled by service
             }
 
             val analysis = llmEngine.analyzeForReading(content.fullText, userIntent)
@@ -76,6 +82,9 @@ class ReadingPipeline(
             }
             lastAnalysis = analysis
             Log.d(TAG, "Analysis produced ${analysis.segments.size} segments (${analysis.readableSegments.size} readable)")
+
+            // Save to history
+            saveToHistory(content, analysis, command)
 
             // Stage 3: Intelligent TTS
             _pipelineState.value = PipelineState.SPEAKING
@@ -109,6 +118,35 @@ class ReadingPipeline(
         // Wait for the result with timeout
         return withTimeoutOrNull(EXTRACTION_TIMEOUT_MS) {
             ScreenReaderAccessibilityService.extractedText.first()
+        }
+    }
+
+    private suspend fun saveToHistory(
+        content: ExtractedContent,
+        analysis: AnnotatedReadingResult,
+        command: VoiceCommand
+    ) {
+        try {
+            val segmentsJson = JSONArray().apply {
+                analysis.segments.forEach { segment ->
+                    put(JSONObject().apply {
+                        put("type", segment.type.name)
+                        put("text", segment.text)
+                    })
+                }
+            }.toString()
+
+            historyDao?.insert(
+                ReadingHistoryEntry(
+                    sourceApp = content.sourceApp,
+                    rawTextPreview = content.fullText.take(200),
+                    segmentsJson = segmentsJson,
+                    segmentCount = analysis.segments.size,
+                    commandType = command.type.name
+                )
+            )
+        } catch (e: Exception) {
+            Log.e(TAG, "Failed to save history", e)
         }
     }
 

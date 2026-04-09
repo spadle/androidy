@@ -32,7 +32,15 @@ class VoiceCommandListener(private val context: Context) {
             "summarize it",
             "tell me what it says",
             "read the screen",
-            "hey reader"
+            "hey reader",
+            "pause",
+            "stop reading",
+            "resume",
+            "continue reading",
+            "keep reading",
+            "replay",
+            "read again",
+            "read it again"
         )
     }
 
@@ -174,6 +182,9 @@ class VoiceCommandListener(private val context: Context) {
 
     private fun classifyCommand(trigger: String): CommandType {
         return when {
+            trigger.contains("pause") || trigger == "stop reading" -> CommandType.PAUSE
+            trigger.contains("resume") || trigger.contains("continue") || trigger == "keep reading" -> CommandType.RESUME
+            trigger.contains("replay") || trigger.contains("again") -> CommandType.REPLAY
             trigger.contains("summarize") -> CommandType.SUMMARIZE
             trigger.contains("read") -> CommandType.READ
             trigger.contains("tell") || trigger.contains("what") -> CommandType.READ
@@ -204,5 +215,8 @@ data class VoiceCommand(
 enum class CommandType {
     READ,       // Read the screen content
     SUMMARIZE,  // Provide a summary
-    ACTIVATE    // Wake word detected
+    ACTIVATE,   // Wake word detected
+    PAUSE,      // Pause current reading
+    RESUME,     // Resume paused reading
+    REPLAY      // Replay last reading
 }

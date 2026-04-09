@@ -62,6 +62,12 @@ dependencies {
     ksp(libs.hilt.compiler)
     implementation(libs.hilt.navigation.compose)
 
+    implementation(libs.datastore.preferences)
+
+    implementation(libs.room.runtime)
+    implementation(libs.room.ktx)
+    ksp(libs.room.compiler)
+
     // LiteRT (formerly TensorFlow Lite) — core on-device ML runtime
     implementation(libs.litert)
     implementation(libs.litert.gpu) // GPU delegate for accelerated inference

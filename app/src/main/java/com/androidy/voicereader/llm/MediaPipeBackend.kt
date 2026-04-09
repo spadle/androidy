@@ -26,16 +26,16 @@ class MediaPipeBackend(private val context: Context) : LlmBackend {
 
     private var llmInference: LlmInference? = null
 
-    override suspend fun load(modelPath: String) = withContext(Dispatchers.IO) {
-        val options = LlmInference.LlmInferenceOptions.builder()
-            .setModelPath(modelPath)
-            .setMaxTokens(MAX_TOKENS)
-            .setTemperature(TEMPERATURE)
-            .setTopK(TOP_K)
-            .build()
+    override suspend fun load(modelPath: String) {
+        withContext(Dispatchers.IO) {
+            val options = LlmInference.LlmInferenceOptions.builder()
+                .setModelPath(modelPath)
+                .setMaxTokens(MAX_TOKENS)
+                .build()
 
-        llmInference = LlmInference.createFromOptions(context, options)
-        Log.d(TAG, "MediaPipe LLM Inference loaded successfully with model: $modelPath")
+            llmInference = LlmInference.createFromOptions(context, options)
+            Log.d(TAG, "MediaPipe LLM Inference loaded successfully with model: $modelPath")
+        }
     }
 
     override suspend fun generateResponse(prompt: String): String = withContext(Dispatchers.IO) {

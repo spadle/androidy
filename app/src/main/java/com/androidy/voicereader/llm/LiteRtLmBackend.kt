@@ -44,44 +44,46 @@ class LiteRtLmBackend(private val context: Context) : LlmBackend {
     private var closeMethod: java.lang.reflect.Method? = null
     private var resolvedEngineClassName: String? = null
 
-    override suspend fun load(modelPath: String) = withContext(Dispatchers.IO) {
-        // Find the available engine class
-        val (engineClass, className) = findEngineClass()
-            ?: throw ClassNotFoundException(
-                "LiteRT-LM engine class not found. Tried: ${ENGINE_CLASS_CANDIDATES.joinToString()}"
-            )
-        resolvedEngineClassName = className
+    override suspend fun load(modelPath: String) {
+        withContext(Dispatchers.IO) {
+            // Find the available engine class
+            val (engineClass, className) = findEngineClass()
+                ?: throw ClassNotFoundException(
+                    "LiteRT-LM engine class not found. Tried: ${ENGINE_CLASS_CANDIDATES.joinToString()}"
+                )
+            resolvedEngineClassName = className
 
-        try {
-            Log.d(TAG, "Using LiteRT-LM engine class: $className")
+            try {
+                Log.d(TAG, "Using LiteRT-LM engine class: $className")
 
-            // Build options
-            val builderClass = Class.forName("$className\$Options\$Builder")
-            val builder = builderClass.getDeclaredConstructor().newInstance()
+                // Build options
+                val builderClass = Class.forName("$className\$Options\$Builder")
+                val builder = builderClass.getDeclaredConstructor().newInstance()
 
-            builderClass.getMethod("setModelPath", String::class.java)
-                .invoke(builder, modelPath)
-            builderClass.getMethod("setMaxTokens", Int::class.javaPrimitiveType)
-                .invoke(builder, MAX_TOKENS)
-            builderClass.getMethod("setTemperature", Float::class.javaPrimitiveType)
-                .invoke(builder, TEMPERATURE)
-            builderClass.getMethod("setTopK", Int::class.javaPrimitiveType)
-                .invoke(builder, TOP_K)
+                builderClass.getMethod("setModelPath", String::class.java)
+                    .invoke(builder, modelPath)
+                builderClass.getMethod("setMaxTokens", Int::class.javaPrimitiveType)
+                    .invoke(builder, MAX_TOKENS)
+                builderClass.getMethod("setTemperature", Float::class.javaPrimitiveType)
+                    .invoke(builder, TEMPERATURE)
+                builderClass.getMethod("setTopK", Int::class.javaPrimitiveType)
+                    .invoke(builder, TOP_K)
 
-            val options = builderClass.getMethod("build").invoke(builder)
-            val optionsClass = Class.forName("$className\$Options")
+                val options = builderClass.getMethod("build").invoke(builder)
+                val optionsClass = Class.forName("$className\$Options")
 
-            // Create engine
-            engine = engineClass.getMethod("create", Context::class.java, optionsClass)
-                .invoke(null, context, options)
+                // Create engine
+                engine = engineClass.getMethod("create", Context::class.java, optionsClass)
+                    .invoke(null, context, options)
 
-            generateMethod = engineClass.getMethod("generateResponse", String::class.java)
-            closeMethod = engineClass.getMethod("close")
+                generateMethod = engineClass.getMethod("generateResponse", String::class.java)
+                closeMethod = engineClass.getMethod("close")
 
-            Log.d(TAG, "LiteRT-LM engine loaded: $modelPath")
-        } catch (e: Exception) {
-            Log.e(TAG, "Failed to initialize LiteRT-LM ($className)", e)
-            throw e
+                Log.d(TAG, "LiteRT-LM engine loaded: $modelPath")
+            } catch (e: Exception) {
+                Log.e(TAG, "Failed to initialize LiteRT-LM ($className)", e)
+                throw e
+            }
         }
     }
 
