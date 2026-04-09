@@ -9,6 +9,7 @@ lifecycle = "2.8.7"
 activity = "1.9.3"
 coreKtx = "1.15.0"
 mediapipe = "0.10.27"
+litert = "2.0.0"
 litertlm = "1.0.0"
 navigationCompose = "2.8.5"
 
@@ -32,8 +33,12 @@ hilt-android = { group = "com.google.dagger", name = "hilt-android", version.ref
 hilt-compiler = { group = "com.google.dagger", name = "hilt-compiler", version.ref = "hilt" }
 hilt-navigation-compose = { group = "androidx.hilt", name = "hilt-navigation-compose", version.ref = "hiltNavigation" }
 
-# LiteRT-LM: Google's new on-device LLM runtime (successor to MediaPipe LLM Inference)
-litert-lm = { group = "com.google.ai.edge", name = "litert-lm", version.ref = "litertlm" }
+# LiteRT (formerly TensorFlow Lite) — core on-device ML runtime
+litert = { group = "com.google.ai.edge.litert", name = "litert", version.ref = "litert" }
+litert-gpu = { group = "com.google.ai.edge.litert", name = "litert-gpu", version.ref = "litert" }
+
+# LiteRT-LM: LLM-specific layer built on LiteRT, optimized for Gemma 4
+litert-lm = { group = "com.google.ai.edge.litertlm", name = "litertlm-android", version.ref = "litertlm" }
 
 # MediaPipe LLM Inference: kept as fallback (deprecated but still functional)
 mediapipe-llm = { group = "com.google.mediapipe", name = "tasks-genai", version.ref = "mediapipe" }

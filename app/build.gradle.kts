@@ -62,7 +62,11 @@ dependencies {
     ksp(libs.hilt.compiler)
     implementation(libs.hilt.navigation.compose)
 
-    // LiteRT-LM: Google's latest on-device LLM runtime for Gemma 4
+    // LiteRT (formerly TensorFlow Lite) — core on-device ML runtime
+    implementation(libs.litert)
+    implementation(libs.litert.gpu) // GPU delegate for accelerated inference
+
+    // LiteRT-LM: LLM-specific layer for Gemma 4 E2B on-device
     implementation(libs.litert.lm)
 
     // MediaPipe LLM Inference: fallback for devices where LiteRT-LM isn't available

@@ -6,17 +6,19 @@ import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.withContext
 
 /**
- * LiteRT-LM backend — Google's newest on-device LLM runtime (April 2026).
- * Supports Gemma 4 E2B/E4B with NPU/GPU acceleration.
+ * LiteRT-LM backend — Google's on-device LLM runtime (successor to MediaPipe LLM Inference).
  *
- * Uses .litertlm or .task model files from HuggingFace:
- *   litert-community/gemma-4-E2B-it-litert-lm
- *
- * LiteRT-LM provides:
+ * Built on LiteRT (formerly TensorFlow Lite), with LLM-specific optimizations:
  * - NPU acceleration on supported chipsets (Pixel, Samsung, Qualcomm)
  * - GPU fallback via OpenCL/Vulkan
- * - 4x faster inference vs MediaPipe on Gemma 4
+ * - 4x faster inference vs MediaPipe
  * - Streaming token generation
+ *
+ * Uses .litertlm model files from HuggingFace:
+ *   litert-community/gemma-4-E2B-it-litert-lm
+ *
+ * Dependency: com.google.ai.edge.litertlm:litertlm-android
+ * (which transitively depends on com.google.ai.edge.litert:litert)
  */
 class LiteRtLmBackend(private val context: Context) : LlmBackend {
 
@@ -25,30 +27,40 @@ class LiteRtLmBackend(private val context: Context) : LlmBackend {
         private const val MAX_TOKENS = 1024
         private const val TEMPERATURE = 0.7f
         private const val TOP_K = 40
+
+        // Known class names for the LiteRT-LM API
+        // The actual package may vary between releases, so we try multiple
+        private val ENGINE_CLASS_CANDIDATES = listOf(
+            "com.google.ai.edge.litertlm.LlmEngine",
+            "com.google.ai.edge.litert.lm.LlmEngine",
+            "com.google.ai.edge.litertlm.LlmInference",
+        )
     }
 
     override val name = "LiteRT-LM"
 
-    // LiteRT-LM engine instance — loaded via reflection to gracefully handle
-    // cases where the library isn't available on the device
     private var engine: Any? = null
     private var generateMethod: java.lang.reflect.Method? = null
     private var closeMethod: java.lang.reflect.Method? = null
+    private var resolvedEngineClassName: String? = null
 
     override suspend fun load(modelPath: String) = withContext(Dispatchers.IO) {
-        try {
-            // Load LiteRT-LM via its API
-            // com.google.ai.edge.litertlm.LlmEngine
-            val engineClass = Class.forName("com.google.ai.edge.litertlm.LlmEngine")
-            val builderClass = Class.forName("com.google.ai.edge.litertlm.LlmEngine\$Options\$Builder")
+        // Find the available engine class
+        val (engineClass, className) = findEngineClass()
+            ?: throw ClassNotFoundException(
+                "LiteRT-LM engine class not found. Tried: ${ENGINE_CLASS_CANDIDATES.joinToString()}"
+            )
+        resolvedEngineClassName = className
 
+        try {
+            Log.d(TAG, "Using LiteRT-LM engine class: $className")
+
+            // Build options
+            val builderClass = Class.forName("$className\$Options\$Builder")
             val builder = builderClass.getDeclaredConstructor().newInstance()
 
-            // Set model path
             builderClass.getMethod("setModelPath", String::class.java)
                 .invoke(builder, modelPath)
-
-            // Set generation parameters
             builderClass.getMethod("setMaxTokens", Int::class.javaPrimitiveType)
                 .invoke(builder, MAX_TOKENS)
             builderClass.getMethod("setTemperature", Float::class.javaPrimitiveType)
@@ -57,20 +69,18 @@ class LiteRtLmBackend(private val context: Context) : LlmBackend {
                 .invoke(builder, TOP_K)
 
             val options = builderClass.getMethod("build").invoke(builder)
-            val optionsClass = Class.forName("com.google.ai.edge.litertlm.LlmEngine\$Options")
+            val optionsClass = Class.forName("$className\$Options")
 
+            // Create engine
             engine = engineClass.getMethod("create", Context::class.java, optionsClass)
                 .invoke(null, context, options)
 
             generateMethod = engineClass.getMethod("generateResponse", String::class.java)
             closeMethod = engineClass.getMethod("close")
 
-            Log.d(TAG, "LiteRT-LM engine loaded successfully with model: $modelPath")
-        } catch (e: ClassNotFoundException) {
-            Log.w(TAG, "LiteRT-LM library not available on this device")
-            throw e
+            Log.d(TAG, "LiteRT-LM engine loaded: $modelPath")
         } catch (e: Exception) {
-            Log.e(TAG, "Failed to initialize LiteRT-LM", e)
+            Log.e(TAG, "Failed to initialize LiteRT-LM ($className)", e)
             throw e
         }
     }
@@ -93,12 +103,20 @@ class LiteRtLmBackend(private val context: Context) : LlmBackend {
         closeMethod = null
     }
 
-    fun isAvailable(): Boolean {
-        return try {
-            Class.forName("com.google.ai.edge.litertlm.LlmEngine")
-            true
-        } catch (e: ClassNotFoundException) {
-            false
+    /**
+     * Check if the LiteRT-LM library is available on the classpath.
+     */
+    fun isAvailable(): Boolean = findEngineClass() != null
+
+    private fun findEngineClass(): Pair<Class<*>, String>? {
+        for (className in ENGINE_CLASS_CANDIDATES) {
+            try {
+                val clazz = Class.forName(className)
+                return clazz to className
+            } catch (_: ClassNotFoundException) {
+                continue
+            }
         }
+        return null
     }
 }

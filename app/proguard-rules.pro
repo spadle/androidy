@@ -1,4 +1,8 @@
-# LiteRT-LM (Google's on-device LLM runtime)
+# LiteRT (formerly TensorFlow Lite) — core on-device ML runtime
+-keep class com.google.ai.edge.litert.** { *; }
+-dontwarn com.google.ai.edge.litert.**
+
+# LiteRT-LM — LLM-specific layer on LiteRT
 -keep class com.google.ai.edge.litertlm.** { *; }
 -dontwarn com.google.ai.edge.litertlm.**
 

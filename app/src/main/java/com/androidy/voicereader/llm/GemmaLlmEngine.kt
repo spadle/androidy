@@ -34,12 +34,15 @@ class GemmaLlmEngine @Inject constructor(
         private const val TAG = "GemmaLlmEngine"
 
         // Model files checked in priority order
+        // LiteRT-LM (.litertlm) > TFLite (.tflite) > MediaPipe (.task) > Legacy (.bin)
         private val MODEL_FILES = listOf(
-            "gemma-4-e2b-it.litertlm",   // Gemma 4 E2B — LiteRT-LM format (best)
-            "gemma-4-e2b-it.task",        // Gemma 4 E2B — MediaPipe task format
-            "gemma-4-e4b-it.litertlm",   // Gemma 4 E4B — larger, more capable
-            "gemma-4-e4b-it.task",        // Gemma 4 E4B — MediaPipe format
-            "gemma-2b-it-gpu-int4.bin",   // Legacy Gemma 2B — still supported
+            "gemma-4-e2b-it.litertlm",   // Gemma 4 E2B — LiteRT-LM format (best, NPU accelerated)
+            "gemma-4-e2b-it.tflite",     // Gemma 4 E2B — TFLite/LiteRT format (GPU delegate)
+            "gemma-4-e2b-it.task",       // Gemma 4 E2B — MediaPipe task format
+            "gemma-4-e4b-it.litertlm",  // Gemma 4 E4B — larger, more capable
+            "gemma-4-e4b-it.tflite",    // Gemma 4 E4B — TFLite/LiteRT format
+            "gemma-4-e4b-it.task",       // Gemma 4 E4B — MediaPipe format
+            "gemma-2b-it-gpu-int4.bin",  // Legacy Gemma 2B — still supported
         )
     }
 
@@ -77,19 +80,20 @@ class GemmaLlmEngine @Inject constructor(
             Log.d(TAG, "Found model: $modelFile at $modelPath")
 
             // Choose backend based on model format and availability
-            val isLiteRtModel = modelFile.endsWith(".litertlm")
+            // LiteRT-LM handles .litertlm natively and .tflite via LiteRT core
+            val isLiteRtCompatible = modelFile.endsWith(".litertlm") || modelFile.endsWith(".tflite")
             val liteRtBackend = LiteRtLmBackend(context)
 
-            if (isLiteRtModel && liteRtBackend.isAvailable()) {
-                // Best path: LiteRT-LM format + LiteRT-LM runtime
-                _loadingProgress.value = "Loading $modelFile via LiteRT-LM (NPU-accelerated)..."
+            if (isLiteRtCompatible && liteRtBackend.isAvailable()) {
+                val accelType = if (modelFile.endsWith(".litertlm")) "NPU/GPU" else "GPU (LiteRT)"
+                _loadingProgress.value = "Loading $modelFile via LiteRT-LM ($accelType)..."
                 try {
                     liteRtBackend.load(modelPath)
                     backend = liteRtBackend
                     _activeBackend.value = "LiteRT-LM"
                     _isModelLoaded.value = true
-                    _loadingProgress.value = "Loaded $modelFile via LiteRT-LM"
-                    Log.d(TAG, "Model loaded via LiteRT-LM")
+                    _loadingProgress.value = "Loaded $modelFile via LiteRT-LM ($accelType)"
+                    Log.d(TAG, "Model loaded via LiteRT-LM ($accelType)")
                     return@withContext
                 } catch (e: Exception) {
                     Log.w(TAG, "LiteRT-LM failed, trying MediaPipe fallback", e)
