@@ -1,0 +1,7 @@
+<?xml version="1.0" encoding="utf-8"?>
+<resources>
+    <string name="app_name">Voice Reader</string>
+    <string name="accessibility_service_description">Voice Reader uses accessibility to read screen content from other apps. When you give a voice command like \"read this\", it extracts visible text, analyzes it with AI, and reads it back intelligently with emphasis on important parts.</string>
+    <string name="notification_channel_name">Voice Reader Agent</string>
+    <string name="notification_channel_description">Shows when Voice Reader is listening for commands</string>
+</resources>
