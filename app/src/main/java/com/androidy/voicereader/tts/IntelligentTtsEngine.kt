@@ -50,6 +50,7 @@ class IntelligentTtsEngine @Inject constructor(
 
     private var tts: TextToSpeech? = null
     private var isInitialized = false
+    private var ssmlSupported = true // assume supported; fallback on error
     private val utteranceQueue = ConcurrentLinkedQueue<String>()
 
     private val _isSpeaking = MutableStateFlow(false)
@@ -130,8 +131,31 @@ class IntelligentTtsEngine @Inject constructor(
 
     private fun speakSegment(segment: ReadingSegment, utteranceId: String) {
         val engine = tts ?: return
+        if (segment.type == SegmentType.SKIP) return
 
-        // Apply voice parameters based on segment type
+        // Try SSML first for richer voice control (prosody, emphasis, breaks)
+        if (ssmlSupported) {
+            val ssml = SsmlRenderer.renderSegment(segment, useSsml = true)
+            if (ssml.isNotBlank()) {
+                // Reset to defaults — SSML handles rate/pitch inline
+                engine.setSpeechRate(RATE_NORMAL)
+                engine.setPitch(PITCH_NORMAL)
+
+                val params = Bundle().apply {
+                    putString(TextToSpeech.Engine.KEY_PARAM_UTTERANCE_ID, utteranceId)
+                }
+                val result = engine.speak(ssml, TextToSpeech.QUEUE_ADD, params, utteranceId)
+                if (result == TextToSpeech.SUCCESS) {
+                    utteranceQueue.add(utteranceId)
+                    return
+                }
+                // SSML failed — fall back to plain mode for all future segments
+                Log.w(TAG, "SSML not supported by TTS engine, falling back to plain mode")
+                ssmlSupported = false
+            }
+        }
+
+        // Fallback: set rate/pitch per segment type and use plain text
         when (segment.type) {
             SegmentType.IMPORTANT -> {
                 engine.setSpeechRate(RATE_IMPORTANT)
@@ -149,16 +173,10 @@ class IntelligentTtsEngine @Inject constructor(
                 engine.setSpeechRate(RATE_SUMMARY)
                 engine.setPitch(PITCH_SUMMARY)
             }
-            SegmentType.SKIP -> return // Should not reach here
+            SegmentType.SKIP -> return
         }
 
-        // Add a brief intro for notes and summaries
-        val textToSpeak = when (segment.type) {
-            SegmentType.NOTE -> "Note: ${segment.text}"
-            SegmentType.SUMMARY -> "In summary: ${segment.text}"
-            else -> segment.text
-        }
-
+        val textToSpeak = SsmlRenderer.renderSegment(segment, useSsml = false)
         val params = Bundle().apply {
             putString(TextToSpeech.Engine.KEY_PARAM_UTTERANCE_ID, utteranceId)
         }

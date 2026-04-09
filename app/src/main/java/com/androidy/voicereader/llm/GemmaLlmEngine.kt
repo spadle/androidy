@@ -134,27 +134,85 @@ Here is the text extracted from the screen:
 $truncatedText
 ---
 
-Analyze this text and produce an annotated version for text-to-speech reading. Use these markers:
-- [IMPORTANT] before sections that should be read with emphasis (slower, clearer)
-- [SKIP] before sections that are filler, ads, repetitive, or unimportant (these will be omitted)
-- [SUMMARY] before your brief summary of skipped content
-- [NOTE] before your own commentary or context about the content
-- [NORMAL] before regular content to read at normal pace
+Analyze this text and produce an annotated version for text-to-speech reading.
+
+Return a JSON array where each element is: {"text": "content", "type": "emphasis|normal|skip|summary|note"}
+
+Types:
+- "emphasis": Important content — read slowly and clearly
+- "normal": Regular content at normal pace
+- "skip": Filler, ads, navigation, timestamps, like counts — omit entirely
+- "summary": Your brief summary of skipped or long sections
+- "note": Your own commentary or context to help the listener
 
 Rules:
 - Focus on the main content the user cares about
-- Skip navigation elements, ads, timestamps, like counts, share buttons text
+- Skip navigation elements, ads, UI chrome, share buttons
 - Add brief notes to provide context where helpful
-- If the text is a long post, summarize key points first then read important parts
-- Keep your response concise and suitable for listening
+- For long posts, summarize key points first then include important parts
+- Keep output concise and suitable for listening
 
-Produce the annotated reading now.
+Return ONLY the JSON array, no other text.
 <end_of_turn>
 <start_of_turn>model
-"""
+["""
     }
 
     private fun parseAnnotatedResponse(response: String): AnnotatedReadingResult {
+        // Try JSON parsing first
+        val jsonResult = tryParseJson("[" + response.trimStart().removePrefix("["))
+        if (jsonResult != null && jsonResult.isNotEmpty()) {
+            return AnnotatedReadingResult(segments = jsonResult, error = null)
+        }
+
+        // Fallback: parse marker-based format ([IMPORTANT], [SKIP], etc.)
+        return parseMarkerFormat(response)
+    }
+
+    /**
+     * Try to parse JSON array response: [{"text": "...", "type": "..."}]
+     * Gemma 2B may produce slightly malformed JSON, so we use regex extraction as fallback.
+     */
+    private fun tryParseJson(response: String): List<ReadingSegment>? {
+        return try {
+            val segments = mutableListOf<ReadingSegment>()
+            // Extract JSON objects using regex — more forgiving than strict JSON parsing
+            val objectPattern = Regex("""\{\s*"text"\s*:\s*"([^"]*(?:\\"[^"]*)*)"\s*,\s*"type"\s*:\s*"(\w+)"[^}]*\}""")
+
+            val matches = objectPattern.findAll(response)
+            for (match in matches) {
+                val text = match.groupValues[1]
+                    .replace("\\\"", "\"")
+                    .replace("\\n", "\n")
+                    .trim()
+                val typeStr = match.groupValues[2].lowercase()
+
+                if (text.isBlank()) continue
+
+                val type = when (typeStr) {
+                    "emphasis", "important" -> SegmentType.IMPORTANT
+                    "normal" -> SegmentType.NORMAL
+                    "skip", "filler" -> SegmentType.SKIP
+                    "summary" -> SegmentType.SUMMARY
+                    "note", "commentary" -> SegmentType.NOTE
+                    else -> SegmentType.NORMAL
+                }
+                segments.add(ReadingSegment(type, text))
+            }
+
+            if (segments.isEmpty()) null else segments
+        } catch (e: Exception) {
+            Log.d(TAG, "JSON parsing failed, using marker fallback: ${e.message}")
+            null
+        }
+    }
+
+    /**
+     * Fallback parser for marker-based format:
+     * [IMPORTANT] Some important text
+     * [SKIP] Navigation stuff
+     */
+    private fun parseMarkerFormat(response: String): AnnotatedReadingResult {
         val segments = mutableListOf<ReadingSegment>()
         val lines = response.lines()
 
@@ -175,13 +233,11 @@ Produce the annotated reading now.
             }
 
             if (newType != null) {
-                // Save previous segment
                 if (currentText.isNotBlank()) {
                     segments.add(ReadingSegment(currentType, currentText.toString().trim()))
                 }
                 currentType = newType
                 currentText.clear()
-                // Remove the marker prefix from this line
                 val content = trimmed.substringAfter("]").trim()
                 if (content.isNotEmpty()) {
                     currentText.appendLine(content)
@@ -191,15 +247,16 @@ Produce the annotated reading now.
             }
         }
 
-        // Don't forget the last segment
         if (currentText.isNotBlank()) {
             segments.add(ReadingSegment(currentType, currentText.toString().trim()))
         }
 
-        return AnnotatedReadingResult(
-            segments = segments,
-            error = null
-        )
+        // If no markers were found, treat the entire response as a single normal segment
+        if (segments.isEmpty() && response.isNotBlank()) {
+            segments.add(ReadingSegment(SegmentType.NORMAL, response.trim()))
+        }
+
+        return AnnotatedReadingResult(segments = segments, error = null)
     }
 
     private fun getModelPath(): String? {

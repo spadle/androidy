@@ -159,7 +159,7 @@ class VoiceAgentService : Service() {
         return NotificationCompat.Builder(this, CHANNEL_ID)
             .setContentTitle("Voice Reader")
             .setContentText(text)
-            .setSmallIcon(android.R.drawable.ic_btn_speak_now)
+            .setSmallIcon(R.drawable.ic_notification)
             .setContentIntent(pendingIntent)
             .setOngoing(true)
             .build()
