@@ -77,10 +77,13 @@ fun MainScreen(
                     icon = Icons.Default.Accessibility
                 ),
                 SetupItem(
-                    label = "Gemma AI Model",
+                    label = "Gemma 4 AI Model",
                     isReady = uiState.isModelLoaded,
                     icon = Icons.Default.Psychology,
-                    detail = uiState.modelStatus
+                    detail = if (uiState.isModelLoaded)
+                        "${uiState.activeModel} via ${uiState.activeBackend}"
+                    else
+                        uiState.modelStatus
                 ),
                 SetupItem(
                     label = "Background Service",
@@ -360,9 +363,13 @@ fun ModelInfoCard() {
             )
             Spacer(modifier = Modifier.height(8.dp))
             Text(
-                text = "This app uses Google's Gemma 2B model running locally on your device via MediaPipe. " +
-                        "Download the model file (gemma-2b-it-gpu-int4.bin) from Kaggle and place it in the " +
-                        "app's files directory. The model is ~1.4GB and runs entirely offline.",
+                text = "This app uses Google's Gemma 4 E2B model running entirely on-device. " +
+                        "It uses LiteRT-LM (NPU/GPU accelerated) when available, with MediaPipe as fallback.\n\n" +
+                        "Download a model file and place it in the app's files directory:\n" +
+                        "\u2022 gemma-4-e2b-it.litertlm (~1.3GB, recommended)\n" +
+                        "\u2022 gemma-4-e2b-it.task (~1.3GB, MediaPipe format)\n" +
+                        "\u2022 gemma-4-e4b-it.litertlm (~2.5GB, more capable)\n\n" +
+                        "Available from HuggingFace (litert-community) or Kaggle (google/gemma-4).",
                 style = MaterialTheme.typography.bodySmall,
                 color = MaterialTheme.colorScheme.onSurfaceVariant,
                 textAlign = TextAlign.Start

@@ -2,23 +2,29 @@ package com.androidy.voicereader.llm
 
 import android.content.Context
 import android.util.Log
-import com.google.mediapipe.tasks.genai.llminference.LlmInference
 import dagger.hilt.android.qualifiers.ApplicationContext
 import kotlinx.coroutines.Dispatchers
-import kotlinx.coroutines.flow.Flow
 import kotlinx.coroutines.flow.MutableStateFlow
 import kotlinx.coroutines.flow.StateFlow
-import kotlinx.coroutines.flow.flow
 import kotlinx.coroutines.withContext
 import java.io.File
 import javax.inject.Inject
 import javax.inject.Singleton
 
 /**
- * On-device LLM engine using MediaPipe's LLM Inference API with Gemma 2B.
+ * On-device LLM engine for text analysis, targeting Gemma 4 E2B.
  *
- * The model file (gemma-2b-it-gpu-int4.bin) should be placed in the app's
- * files directory. Users can download it from Kaggle or HuggingFace.
+ * Uses a two-tier backend strategy:
+ *   1. LiteRT-LM (preferred) — Google's latest runtime with NPU/GPU acceleration
+ *   2. MediaPipe LLM Inference (fallback) — well-tested, wider device support
+ *
+ * Supported model files (checked in order of preference):
+ *   - gemma-4-e2b-it.litertlm    (LiteRT-LM format, ~1.3GB)
+ *   - gemma-4-e2b-it.task         (MediaPipe format, ~1.3GB)
+ *   - gemma-2b-it-gpu-int4.bin    (legacy Gemma 2B, still works)
+ *
+ * Download from HuggingFace: litert-community/gemma-4-E2B-it-litert-lm
+ * Or from Kaggle: google/gemma-4/transformers/gemma-4-e2b-it
  */
 @Singleton
 class GemmaLlmEngine @Inject constructor(
@@ -26,13 +32,18 @@ class GemmaLlmEngine @Inject constructor(
 ) {
     companion object {
         private const val TAG = "GemmaLlmEngine"
-        private const val MODEL_FILENAME = "gemma-2b-it-gpu-int4.bin"
-        private const val MAX_TOKENS = 1024
-        private const val TEMPERATURE = 0.7f
-        private const val TOP_K = 40
+
+        // Model files checked in priority order
+        private val MODEL_FILES = listOf(
+            "gemma-4-e2b-it.litertlm",   // Gemma 4 E2B — LiteRT-LM format (best)
+            "gemma-4-e2b-it.task",        // Gemma 4 E2B — MediaPipe task format
+            "gemma-4-e4b-it.litertlm",   // Gemma 4 E4B — larger, more capable
+            "gemma-4-e4b-it.task",        // Gemma 4 E4B — MediaPipe format
+            "gemma-2b-it-gpu-int4.bin",   // Legacy Gemma 2B — still supported
+        )
     }
 
-    private var llmInference: LlmInference? = null
+    private var backend: LlmBackend? = null
 
     private val _isModelLoaded = MutableStateFlow(false)
     val isModelLoaded: StateFlow<Boolean> = _isModelLoaded
@@ -40,90 +51,104 @@ class GemmaLlmEngine @Inject constructor(
     private val _loadingProgress = MutableStateFlow("")
     val loadingProgress: StateFlow<String> = _loadingProgress
 
-    /** Initialize the Gemma model. Call this once on app startup. */
+    private val _activeBackend = MutableStateFlow("None")
+    val activeBackend: StateFlow<String> = _activeBackend
+
+    private val _activeModel = MutableStateFlow("None")
+    val activeModel: StateFlow<String> = _activeModel
+
+    /**
+     * Initialize the best available model + backend combo.
+     * Tries LiteRT-LM first (NPU-accelerated), falls back to MediaPipe.
+     */
     suspend fun initialize() = withContext(Dispatchers.IO) {
         try {
-            _loadingProgress.value = "Locating model file..."
-            val modelPath = getModelPath()
+            _loadingProgress.value = "Scanning for model files..."
 
-            if (modelPath == null) {
-                _loadingProgress.value = "Model not found. Please place $MODEL_FILENAME in app files."
-                Log.e(TAG, "Model file not found")
-                return@withContext
+            val (modelPath, modelFile) = findBestModel()
+                ?: run {
+                    _loadingProgress.value = "No model found. Place a Gemma model file in the app's files directory.\n" +
+                        "Supported: ${MODEL_FILES.joinToString(", ")}"
+                    Log.e(TAG, "No model file found in any search path")
+                    return@withContext
+                }
+
+            _activeModel.value = modelFile
+            Log.d(TAG, "Found model: $modelFile at $modelPath")
+
+            // Choose backend based on model format and availability
+            val isLiteRtModel = modelFile.endsWith(".litertlm")
+            val liteRtBackend = LiteRtLmBackend(context)
+
+            if (isLiteRtModel && liteRtBackend.isAvailable()) {
+                // Best path: LiteRT-LM format + LiteRT-LM runtime
+                _loadingProgress.value = "Loading $modelFile via LiteRT-LM (NPU-accelerated)..."
+                try {
+                    liteRtBackend.load(modelPath)
+                    backend = liteRtBackend
+                    _activeBackend.value = "LiteRT-LM"
+                    _isModelLoaded.value = true
+                    _loadingProgress.value = "Loaded $modelFile via LiteRT-LM"
+                    Log.d(TAG, "Model loaded via LiteRT-LM")
+                    return@withContext
+                } catch (e: Exception) {
+                    Log.w(TAG, "LiteRT-LM failed, trying MediaPipe fallback", e)
+                    liteRtBackend.close()
+                }
             }
 
-            _loadingProgress.value = "Loading Gemma model..."
-            Log.d(TAG, "Loading model from: $modelPath")
-
-            val options = LlmInference.LlmInferenceOptions.builder()
-                .setModelPath(modelPath)
-                .setMaxTokens(MAX_TOKENS)
-                .setTemperature(TEMPERATURE)
-                .setTopK(TOP_K)
-                .build()
-
-            llmInference = LlmInference.createFromOptions(context, options)
-            _isModelLoaded.value = true
-            _loadingProgress.value = "Model loaded successfully"
-            Log.d(TAG, "Gemma model loaded successfully")
+            // Fallback: MediaPipe (works with .task, .bin, and .litertlm files)
+            _loadingProgress.value = "Loading $modelFile via MediaPipe..."
+            val mediaPipeBackend = MediaPipeBackend(context)
+            try {
+                mediaPipeBackend.load(modelPath)
+                backend = mediaPipeBackend
+                _activeBackend.value = "MediaPipe"
+                _isModelLoaded.value = true
+                _loadingProgress.value = "Loaded $modelFile via MediaPipe"
+                Log.d(TAG, "Model loaded via MediaPipe")
+            } catch (e: Exception) {
+                _loadingProgress.value = "Failed to load model: ${e.message}"
+                Log.e(TAG, "Both backends failed to load model", e)
+            }
         } catch (e: Exception) {
-            _loadingProgress.value = "Failed to load model: ${e.message}"
-            Log.e(TAG, "Failed to load Gemma model", e)
+            _loadingProgress.value = "Failed to initialize: ${e.message}"
+            Log.e(TAG, "Initialization failed", e)
         }
     }
 
     /**
      * Analyze extracted text and produce annotated reading instructions.
-     * Returns structured output that the TTS engine can interpret.
      */
     suspend fun analyzeForReading(
         rawText: String,
         userCommand: String
     ): AnnotatedReadingResult = withContext(Dispatchers.IO) {
-        val inference = llmInference
+        val activeBackend = backend
             ?: return@withContext AnnotatedReadingResult.error("Model not loaded")
 
         val prompt = buildAnalysisPrompt(rawText, userCommand)
 
         try {
-            val response = inference.generateResponse(prompt)
+            val response = activeBackend.generateResponse(prompt)
             parseAnnotatedResponse(response)
         } catch (e: Exception) {
-            Log.e(TAG, "Inference failed", e)
+            Log.e(TAG, "Inference failed on ${activeBackend.name}", e)
             AnnotatedReadingResult.error("Analysis failed: ${e.message}")
         }
     }
 
-    /** Stream a response token by token for real-time TTS. */
-    fun analyzeForReadingStreaming(
-        rawText: String,
-        userCommand: String
-    ): Flow<String> = flow {
-        val inference = llmInference ?: run {
-            emit("[ERROR: Model not loaded]")
-            return@flow
-        }
-
-        val prompt = buildAnalysisPrompt(rawText, userCommand)
-
-        try {
-            inference.generateResponseAsync(prompt)
-            // For non-streaming fallback, get the full response
-            val response = inference.generateResponse(prompt)
-            emit(response)
-        } catch (e: Exception) {
-            emit("[ERROR: ${e.message}]")
-        }
-    }
+    // --- Prompt building ---
 
     private fun buildAnalysisPrompt(rawText: String, userCommand: String): String {
-        // Truncate text if too long for the model's context
-        val truncatedText = if (rawText.length > 3000) {
-            rawText.take(3000) + "\n[...text truncated...]"
+        val truncatedText = if (rawText.length > 4000) {
+            rawText.take(4000) + "\n[...text truncated...]"
         } else {
             rawText
         }
 
+        // Gemma 4 has a larger context window and better instruction following than 2B,
+        // so we can use a more detailed prompt and expect cleaner JSON output
         return """<start_of_turn>user
 You are a smart reading assistant. The user wants you to read content from their screen.
 
@@ -158,6 +183,8 @@ Return ONLY the JSON array, no other text.
 ["""
     }
 
+    // --- Response parsing (JSON primary, marker fallback) ---
+
     private fun parseAnnotatedResponse(response: String): AnnotatedReadingResult {
         // Try JSON parsing first
         val jsonResult = tryParseJson("[" + response.trimStart().removePrefix("["))
@@ -165,22 +192,16 @@ Return ONLY the JSON array, no other text.
             return AnnotatedReadingResult(segments = jsonResult, error = null)
         }
 
-        // Fallback: parse marker-based format ([IMPORTANT], [SKIP], etc.)
+        // Fallback: parse marker-based format
         return parseMarkerFormat(response)
     }
 
-    /**
-     * Try to parse JSON array response: [{"text": "...", "type": "..."}]
-     * Gemma 2B may produce slightly malformed JSON, so we use regex extraction as fallback.
-     */
     private fun tryParseJson(response: String): List<ReadingSegment>? {
         return try {
             val segments = mutableListOf<ReadingSegment>()
-            // Extract JSON objects using regex — more forgiving than strict JSON parsing
             val objectPattern = Regex("""\{\s*"text"\s*:\s*"([^"]*(?:\\"[^"]*)*)"\s*,\s*"type"\s*:\s*"(\w+)"[^}]*\}""")
 
-            val matches = objectPattern.findAll(response)
-            for (match in matches) {
+            for (match in objectPattern.findAll(response)) {
                 val text = match.groupValues[1]
                     .replace("\\\"", "\"")
                     .replace("\\n", "\n")
@@ -202,16 +223,11 @@ Return ONLY the JSON array, no other text.
 
             if (segments.isEmpty()) null else segments
         } catch (e: Exception) {
-            Log.d(TAG, "JSON parsing failed, using marker fallback: ${e.message}")
+            Log.d(TAG, "JSON parsing failed: ${e.message}")
             null
         }
     }
 
-    /**
-     * Fallback parser for marker-based format:
-     * [IMPORTANT] Some important text
-     * [SKIP] Navigation stuff
-     */
     private fun parseMarkerFormat(response: String): AnnotatedReadingResult {
         val segments = mutableListOf<ReadingSegment>()
         val lines = response.lines()
@@ -251,7 +267,6 @@ Return ONLY the JSON array, no other text.
             segments.add(ReadingSegment(currentType, currentText.toString().trim()))
         }
 
-        // If no markers were found, treat the entire response as a single normal segment
         if (segments.isEmpty() && response.isNotBlank()) {
             segments.add(ReadingSegment(SegmentType.NORMAL, response.trim()))
         }
@@ -259,27 +274,40 @@ Return ONLY the JSON array, no other text.
         return AnnotatedReadingResult(segments = segments, error = null)
     }
 
-    private fun getModelPath(): String? {
-        // Check app's internal files directory
-        val internalFile = File(context.filesDir, MODEL_FILENAME)
-        if (internalFile.exists()) return internalFile.absolutePath
+    // --- Model file discovery ---
 
-        // Check external files directory
-        val externalFile = File(context.getExternalFilesDir(null), MODEL_FILENAME)
-        if (externalFile.exists()) return externalFile.absolutePath
+    /**
+     * Search for the best available model file across multiple directories.
+     * Returns (absolutePath, filename) or null if nothing found.
+     */
+    private fun findBestModel(): Pair<String, String>? {
+        val searchDirs = listOf(
+            context.filesDir,
+            File(context.filesDir, "models"),
+            context.getExternalFilesDir(null),
+            context.getExternalFilesDir("models"),
+        )
 
-        // Check the models subdirectory
-        val modelsDir = File(context.filesDir, "models")
-        val modelsFile = File(modelsDir, MODEL_FILENAME)
-        if (modelsFile.exists()) return modelsFile.absolutePath
+        // Check each model file in priority order across all directories
+        for (modelFile in MODEL_FILES) {
+            for (dir in searchDirs) {
+                if (dir == null) continue
+                val file = File(dir, modelFile)
+                if (file.exists() && file.length() > 0) {
+                    return file.absolutePath to modelFile
+                }
+            }
+        }
 
         return null
     }
 
     fun release() {
-        llmInference?.close()
-        llmInference = null
+        backend?.close()
+        backend = null
         _isModelLoaded.value = false
+        _activeBackend.value = "None"
+        _activeModel.value = "None"
     }
 }
 

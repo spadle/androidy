@@ -25,19 +25,22 @@ class MainViewModel @Inject constructor(
     val uiState: StateFlow<UiState> = _uiState
 
     init {
-        // Observe combined state
         viewModelScope.launch {
             combine(
                 ScreenReaderAccessibilityService.isConnected,
                 VoiceAgentService.isRunning,
                 llmEngine.isModelLoaded,
-                llmEngine.loadingProgress
-            ) { a11yConnected, serviceRunning, modelLoaded, modelProgress ->
+                llmEngine.loadingProgress,
+                llmEngine.activeBackend,
+                llmEngine.activeModel
+            ) { values ->
                 _uiState.value.copy(
-                    isAccessibilityEnabled = a11yConnected,
-                    isServiceRunning = serviceRunning,
-                    isModelLoaded = modelLoaded,
-                    modelStatus = modelProgress
+                    isAccessibilityEnabled = values[0] as Boolean,
+                    isServiceRunning = values[1] as Boolean,
+                    isModelLoaded = values[2] as Boolean,
+                    modelStatus = values[3] as String,
+                    activeBackend = values[4] as String,
+                    activeModel = values[5] as String
                 )
             }.collect { state ->
                 _uiState.value = state
@@ -50,7 +53,7 @@ class MainViewModel @Inject constructor(
             _uiState.value = _uiState.value.copy(modelStatus = "Initializing TTS...")
             ttsEngine.initialize()
 
-            _uiState.value = _uiState.value.copy(modelStatus = "Loading Gemma model...")
+            _uiState.value = _uiState.value.copy(modelStatus = "Loading Gemma 4 model...")
             llmEngine.initialize()
         }
     }
@@ -80,5 +83,7 @@ data class UiState(
     val isServiceRunning: Boolean = false,
     val isModelLoaded: Boolean = false,
     val modelStatus: String = "Not initialized",
-    val agentStatus: String = "Idle"
+    val agentStatus: String = "Idle",
+    val activeBackend: String = "None",
+    val activeModel: String = "None"
 )

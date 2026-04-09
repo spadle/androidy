@@ -62,6 +62,14 @@ dependencies {
     ksp(libs.hilt.compiler)
     implementation(libs.hilt.navigation.compose)
 
-    // MediaPipe LLM Inference for on-device Gemma
+    // LiteRT-LM: Google's latest on-device LLM runtime for Gemma 4
+    implementation(libs.litert.lm)
+
+    // MediaPipe LLM Inference: fallback for devices where LiteRT-LM isn't available
     implementation(libs.mediapipe.llm)
+}
+
+// Don't compress model files
+android.aaptOptions {
+    noCompress("task", "litertlm", "bin", "tflite")
 }
