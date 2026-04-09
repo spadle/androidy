@@ -22,20 +22,28 @@ class ModelDownloadManager @Inject constructor(
 
         val AVAILABLE_MODELS = listOf(
             ModelInfo(
-                id = "gemma-4-e2b-task",
-                name = "Gemma 4 E2B (MediaPipe)",
-                description = "2.5B params, ~2GB — MediaPipe web format, widest compatibility",
-                fileName = "gemma-4-E2B-it-web.task",
-                url = "https://huggingface.co/litert-community/gemma-4-E2B-it-litert-lm/resolve/main/gemma-4-E2B-it-web.task",
-                sizeBytes = 2_000_000_000L
+                id = "gemma3-1b-int4-task",
+                name = "Gemma 3 1B (Recommended)",
+                description = "1B params, ~555MB — int4 quantized, works on all devices",
+                fileName = "gemma3-1b-it-int4.task",
+                url = "https://huggingface.co/litert-community/Gemma3-1B-IT/resolve/main/gemma3-1b-it-int4.task",
+                sizeBytes = 555_000_000L
             ),
             ModelInfo(
-                id = "gemma-4-e2b-litertlm",
-                name = "Gemma 4 E2B (LiteRT-LM)",
-                description = "2.5B params, ~2.6GB — NPU/GPU accelerated, fastest",
-                fileName = "gemma-4-E2B-it.litertlm",
-                url = "https://huggingface.co/litert-community/gemma-4-E2B-it-litert-lm/resolve/main/gemma-4-E2B-it.litertlm",
-                sizeBytes = 2_580_000_000L
+                id = "gemma3-1b-int8-task",
+                name = "Gemma 3 1B (Higher Quality)",
+                description = "1B params, ~1GB — int8 quantized, better quality",
+                fileName = "Gemma3-1B-IT_multi-prefill-seq_q8_ekv2048.task",
+                url = "https://huggingface.co/litert-community/Gemma3-1B-IT/resolve/main/Gemma3-1B-IT_multi-prefill-seq_q8_ekv2048.task",
+                sizeBytes = 1_070_000_000L
+            ),
+            ModelInfo(
+                id = "gemma3-1b-int4-litertlm",
+                name = "Gemma 3 1B (LiteRT-LM)",
+                description = "1B params, ~584MB — NPU/GPU accelerated, fastest",
+                fileName = "gemma3-1b-it-int4.litertlm",
+                url = "https://huggingface.co/litert-community/Gemma3-1B-IT/resolve/main/gemma3-1b-it-int4.litertlm",
+                sizeBytes = 584_000_000L
             )
         )
     }

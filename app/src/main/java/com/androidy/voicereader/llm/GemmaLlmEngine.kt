@@ -36,18 +36,21 @@ class GemmaLlmEngine @Inject constructor(
         // Model files checked in priority order
         // .task (MediaPipe, safest) > .litertlm (LiteRT-LM, fastest) > .tflite > .bin
         private val MODEL_FILES = listOf(
-            "gemma-4-E2B-it-web.task",   // Gemma 4 E2B — MediaPipe task format (safest)
-            "gemma-4-E2B-it.task",       // Gemma 4 E2B — MediaPipe task format
-            "gemma-4-e2b-it.task",       // Gemma 4 E2B — lowercase variant
-            "gemma-4-E2B-it.litertlm",  // Gemma 4 E2B — LiteRT-LM format (NPU accelerated)
-            "gemma-4-e2b-it.litertlm",  // Gemma 4 E2B — lowercase variant
-            "gemma-4-E2B-it.tflite",    // Gemma 4 E2B — TFLite/LiteRT format
-            "gemma-4-e2b-it.tflite",    // Gemma 4 E2B — lowercase variant
-            "gemma-4-E4B-it.task",      // Gemma 4 E4B — MediaPipe format
-            "gemma-4-E4B-it.litertlm",  // Gemma 4 E4B — LiteRT-LM format
-            "gemma-4-e4b-it.litertlm",  // Gemma 4 E4B — lowercase variant
-            "gemma-4-E4B-it.tflite",    // Gemma 4 E4B — TFLite/LiteRT format
-            "gemma-2b-it-gpu-int4.bin",  // Legacy Gemma 2B — still supported
+            // Gemma 3 1B — recommended, tested & working
+            "gemma3-1b-it-int4.task",    // Gemma 3 1B int4 — MediaPipe (smallest, works everywhere)
+            "Gemma3-1B-IT_multi-prefill-seq_q8_ekv2048.task", // Gemma 3 1B q8
+            "Gemma3-1B-IT_multi-prefill-seq_q4_ekv2048.task", // Gemma 3 1B q4
+            "gemma3-1b-it-int4.litertlm", // Gemma 3 1B — LiteRT-LM
+            // Gemma 4 E2B — requires matching LiteRT-LM version
+            "gemma-4-E2B-it.task",
+            "gemma-4-e2b-it.task",
+            "gemma-4-E2B-it.litertlm",
+            "gemma-4-e2b-it.litertlm",
+            // Gemma 4 E4B
+            "gemma-4-E4B-it.task",
+            "gemma-4-E4B-it.litertlm",
+            // Legacy
+            "gemma-2b-it-gpu-int4.bin",
         )
     }
 
