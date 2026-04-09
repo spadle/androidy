@@ -34,14 +34,19 @@ class GemmaLlmEngine @Inject constructor(
         private const val TAG = "GemmaLlmEngine"
 
         // Model files checked in priority order
-        // LiteRT-LM (.litertlm) > TFLite (.tflite) > MediaPipe (.task) > Legacy (.bin)
+        // .task (MediaPipe, safest) > .litertlm (LiteRT-LM, fastest) > .tflite > .bin
         private val MODEL_FILES = listOf(
-            "gemma-4-e2b-it.litertlm",   // Gemma 4 E2B — LiteRT-LM format (best, NPU accelerated)
-            "gemma-4-e2b-it.tflite",     // Gemma 4 E2B — TFLite/LiteRT format (GPU delegate)
-            "gemma-4-e2b-it.task",       // Gemma 4 E2B — MediaPipe task format
-            "gemma-4-e4b-it.litertlm",  // Gemma 4 E4B — larger, more capable
-            "gemma-4-e4b-it.tflite",    // Gemma 4 E4B — TFLite/LiteRT format
-            "gemma-4-e4b-it.task",       // Gemma 4 E4B — MediaPipe format
+            "gemma-4-E2B-it-web.task",   // Gemma 4 E2B — MediaPipe task format (safest)
+            "gemma-4-E2B-it.task",       // Gemma 4 E2B — MediaPipe task format
+            "gemma-4-e2b-it.task",       // Gemma 4 E2B — lowercase variant
+            "gemma-4-E2B-it.litertlm",  // Gemma 4 E2B — LiteRT-LM format (NPU accelerated)
+            "gemma-4-e2b-it.litertlm",  // Gemma 4 E2B — lowercase variant
+            "gemma-4-E2B-it.tflite",    // Gemma 4 E2B — TFLite/LiteRT format
+            "gemma-4-e2b-it.tflite",    // Gemma 4 E2B — lowercase variant
+            "gemma-4-E4B-it.task",      // Gemma 4 E4B — MediaPipe format
+            "gemma-4-E4B-it.litertlm",  // Gemma 4 E4B — LiteRT-LM format
+            "gemma-4-e4b-it.litertlm",  // Gemma 4 E4B — lowercase variant
+            "gemma-4-E4B-it.tflite",    // Gemma 4 E4B — TFLite/LiteRT format
             "gemma-2b-it-gpu-int4.bin",  // Legacy Gemma 2B — still supported
         )
     }
@@ -79,41 +84,54 @@ class GemmaLlmEngine @Inject constructor(
             _activeModel.value = modelFile
             Log.d(TAG, "Found model: $modelFile at $modelPath")
 
-            // Choose backend based on model format and availability
-            // LiteRT-LM handles .litertlm natively and .tflite via LiteRT core
-            val isLiteRtCompatible = modelFile.endsWith(".litertlm") || modelFile.endsWith(".tflite")
-            val liteRtBackend = LiteRtLmBackend(context)
+            // Choose backend based on model format
+            // .task/.bin → MediaPipe (safe, well-tested)
+            // .litertlm → LiteRT-LM only (native format, may crash on version mismatch)
+            // .tflite → LiteRT-LM (GPU delegate)
 
-            if (isLiteRtCompatible && liteRtBackend.isAvailable()) {
-                val accelType = if (modelFile.endsWith(".litertlm")) "NPU/GPU" else "GPU (LiteRT)"
-                _loadingProgress.value = "Loading $modelFile via LiteRT-LM ($accelType)..."
+            if (modelFile.endsWith(".task") || modelFile.endsWith(".bin")) {
+                // MediaPipe handles .task and .bin natively
+                _loadingProgress.value = "Loading $modelFile via MediaPipe..."
+                val mediaPipeBackend = MediaPipeBackend(context)
                 try {
-                    liteRtBackend.load(modelPath)
-                    backend = liteRtBackend
-                    _activeBackend.value = "LiteRT-LM"
+                    mediaPipeBackend.load(modelPath)
+                    backend = mediaPipeBackend
+                    _activeBackend.value = "MediaPipe"
                     _isModelLoaded.value = true
-                    _loadingProgress.value = "Loaded $modelFile via LiteRT-LM ($accelType)"
-                    Log.d(TAG, "Model loaded via LiteRT-LM ($accelType)")
+                    _loadingProgress.value = "Loaded $modelFile via MediaPipe"
+                    Log.d(TAG, "Model loaded via MediaPipe")
                     return@withContext
                 } catch (e: Exception) {
-                    Log.w(TAG, "LiteRT-LM failed, trying MediaPipe fallback", e)
-                    liteRtBackend.close()
+                    _loadingProgress.value = "Failed to load model: ${e.message}"
+                    Log.e(TAG, "MediaPipe failed to load model", e)
+                    mediaPipeBackend.close()
                 }
-            }
-
-            // Fallback: MediaPipe (works with .task, .bin, and .litertlm files)
-            _loadingProgress.value = "Loading $modelFile via MediaPipe..."
-            val mediaPipeBackend = MediaPipeBackend(context)
-            try {
-                mediaPipeBackend.load(modelPath)
-                backend = mediaPipeBackend
-                _activeBackend.value = "MediaPipe"
-                _isModelLoaded.value = true
-                _loadingProgress.value = "Loaded $modelFile via MediaPipe"
-                Log.d(TAG, "Model loaded via MediaPipe")
-            } catch (e: Exception) {
-                _loadingProgress.value = "Failed to load model: ${e.message}"
-                Log.e(TAG, "Both backends failed to load model", e)
+            } else if (modelFile.endsWith(".litertlm") || modelFile.endsWith(".tflite")) {
+                // LiteRT-LM handles .litertlm and .tflite
+                val liteRtBackend = LiteRtLmBackend(context)
+                if (liteRtBackend.isAvailable()) {
+                    val accelType = if (modelFile.endsWith(".litertlm")) "NPU/GPU" else "GPU (LiteRT)"
+                    _loadingProgress.value = "Loading $modelFile via LiteRT-LM ($accelType)..."
+                    try {
+                        liteRtBackend.load(modelPath)
+                        backend = liteRtBackend
+                        _activeBackend.value = "LiteRT-LM"
+                        _isModelLoaded.value = true
+                        _loadingProgress.value = "Loaded $modelFile via LiteRT-LM ($accelType)"
+                        Log.d(TAG, "Model loaded via LiteRT-LM ($accelType)")
+                        return@withContext
+                    } catch (e: Exception) {
+                        Log.e(TAG, "LiteRT-LM failed to load model", e)
+                        liteRtBackend.close()
+                        _loadingProgress.value = "LiteRT-LM failed: ${e.message}\nTry downloading the MediaPipe (.task) format instead."
+                    }
+                } else {
+                    _loadingProgress.value = "LiteRT-LM runtime not available on this device.\nDownload the MediaPipe (.task) format instead."
+                    Log.e(TAG, "LiteRT-LM not available for .litertlm model")
+                }
+            } else {
+                _loadingProgress.value = "Unsupported model format: $modelFile"
+                Log.e(TAG, "Unsupported model format: $modelFile")
             }
         } catch (e: Exception) {
             _loadingProgress.value = "Failed to initialize: ${e.message}"

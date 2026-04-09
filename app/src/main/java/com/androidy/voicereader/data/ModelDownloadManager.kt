@@ -24,18 +24,18 @@ class ModelDownloadManager @Inject constructor(
             ModelInfo(
                 id = "gemma-4-e2b-task",
                 name = "Gemma 4 E2B (MediaPipe)",
-                description = "2.5B params, ~1.3GB — MediaPipe format, widest compatibility",
-                fileName = "gemma-4-e2b-it.task",
-                url = "https://huggingface.co/litert-community/gemma-4-E2B-it-litert-lm/resolve/main/gemma-4-e2b-it.task",
-                sizeBytes = 1_400_000_000L
+                description = "2.5B params, ~2GB — MediaPipe web format, widest compatibility",
+                fileName = "gemma-4-E2B-it-web.task",
+                url = "https://huggingface.co/litert-community/gemma-4-E2B-it-litert-lm/resolve/main/gemma-4-E2B-it-web.task",
+                sizeBytes = 2_000_000_000L
             ),
             ModelInfo(
                 id = "gemma-4-e2b-litertlm",
                 name = "Gemma 4 E2B (LiteRT-LM)",
-                description = "2.5B params, ~1.3GB — NPU/GPU accelerated, fastest",
-                fileName = "gemma-4-e2b-it.litertlm",
-                url = "https://huggingface.co/litert-community/gemma-4-E2B-it-litert-lm/resolve/main/gemma-4-e2b-it.litertlm",
-                sizeBytes = 1_300_000_000L
+                description = "2.5B params, ~2.6GB — NPU/GPU accelerated, fastest",
+                fileName = "gemma-4-E2B-it.litertlm",
+                url = "https://huggingface.co/litert-community/gemma-4-E2B-it-litert-lm/resolve/main/gemma-4-E2B-it.litertlm",
+                sizeBytes = 2_580_000_000L
             )
         )
     }
@@ -43,11 +43,18 @@ class ModelDownloadManager @Inject constructor(
     private val _downloadState = MutableStateFlow<DownloadState>(DownloadState.Idle)
     val downloadState: StateFlow<DownloadState> = _downloadState
 
+    private val _installedModels = MutableStateFlow<List<String>>(emptyList())
+    val installedModels: StateFlow<List<String>> = _installedModels
+
+    init {
+        refreshInstalledModels()
+    }
+
     fun getModelsDir(): File = context.filesDir
 
-    fun getInstalledModels(): List<String> {
+    fun refreshInstalledModels() {
         val dir = getModelsDir()
-        return dir.listFiles()
+        _installedModels.value = dir.listFiles()
             ?.filter { it.extension in listOf("task", "litertlm", "tflite", "bin") }
             ?.map { it.name }
             ?: emptyList()
@@ -93,6 +100,7 @@ class ModelDownloadManager @Inject constructor(
 
                 tempFile.renameTo(destFile)
                 _downloadState.value = DownloadState.Completed(model.fileName)
+                refreshInstalledModels()
                 Log.d(TAG, "Download completed: ${model.fileName}")
 
             } catch (e: Exception) {
@@ -109,6 +117,7 @@ class ModelDownloadManager @Inject constructor(
 
     fun deleteModel(fileName: String) {
         File(getModelsDir(), fileName).delete()
+        refreshInstalledModels()
     }
 }
 

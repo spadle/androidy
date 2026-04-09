@@ -16,7 +16,6 @@ import androidx.activity.result.contract.ActivityResultContracts
 import androidx.activity.viewModels
 import androidx.compose.runtime.collectAsState
 import androidx.compose.runtime.getValue
-import androidx.compose.runtime.remember
 import androidx.core.content.ContextCompat
 import androidx.navigation.compose.NavHost
 import androidx.navigation.compose.composable
@@ -116,7 +115,7 @@ class MainActivity : ComponentActivity() {
                     }
                     composable("models") {
                         val downloadState by viewModel.downloadState.collectAsState()
-                        val installedModels = remember { viewModel.getInstalledModels() }
+                        val installedModels by viewModel.installedModels.collectAsState()
 
                         ModelDownloadScreen(
                             availableModels = ModelDownloadManager.AVAILABLE_MODELS,

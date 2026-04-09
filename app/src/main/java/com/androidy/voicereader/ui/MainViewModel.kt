@@ -150,7 +150,7 @@ class MainViewModel @Inject constructor(
     // Model download actions
     val downloadState: StateFlow<DownloadState> = modelDownloadManager.downloadState
 
-    fun getInstalledModels(): List<String> = modelDownloadManager.getInstalledModels()
+    val installedModels: StateFlow<List<String>> = modelDownloadManager.installedModels
 
     fun downloadModel(model: ModelInfo) {
         viewModelScope.launch { modelDownloadManager.downloadModel(model) }
