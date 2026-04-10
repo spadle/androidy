@@ -36,11 +36,7 @@ class MainActivity : ComponentActivity() {
     private val serviceConnection = object : ServiceConnection {
         override fun onServiceConnected(name: ComponentName?, service: IBinder?) {
             val binder = service as VoiceAgentService.LocalBinder
-            voiceAgentService = binder.getService().also {
-                it.llmEngine = viewModel.llmEngine
-                it.ttsEngine = viewModel.ttsEngine
-                it.historyDao = viewModel.historyDao
-            }
+            voiceAgentService = binder.getService()
             serviceBound = true
         }
 

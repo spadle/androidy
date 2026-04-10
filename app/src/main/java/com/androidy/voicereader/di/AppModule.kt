@@ -5,8 +5,6 @@ import androidx.room.Room
 import com.androidy.voicereader.data.ReadingHistoryDao
 import com.androidy.voicereader.data.ReadingHistoryDatabase
 import com.androidy.voicereader.data.SettingsRepository
-import com.androidy.voicereader.llm.GemmaLlmEngine
-import com.androidy.voicereader.tts.IntelligentTtsEngine
 import dagger.Module
 import dagger.Provides
 import dagger.hilt.InstallIn
@@ -37,15 +35,6 @@ object AppModule {
         return database.readingHistoryDao()
     }
 
-    @Provides
-    @Singleton
-    fun provideGemmaLlmEngine(@ApplicationContext context: Context): GemmaLlmEngine {
-        return GemmaLlmEngine(context)
-    }
-
-    @Provides
-    @Singleton
-    fun provideIntelligentTtsEngine(@ApplicationContext context: Context): IntelligentTtsEngine {
-        return IntelligentTtsEngine(context)
-    }
+    // GemmaLlmEngine and IntelligentTtsEngine have @Inject constructors + @Singleton
+    // — Hilt provides them automatically, no manual @Provides needed
 }

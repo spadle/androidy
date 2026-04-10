@@ -12,21 +12,20 @@ import android.os.IBinder
 import android.util.Log
 import androidx.core.app.NotificationCompat
 import com.androidy.voicereader.R
-import com.androidy.voicereader.accessibility.ScreenReaderAccessibilityService
 import com.androidy.voicereader.data.ReadingHistoryDao
 import com.androidy.voicereader.llm.GemmaLlmEngine
 import com.androidy.voicereader.overlay.FloatingBubbleService
 import com.androidy.voicereader.pipeline.ReadingPipeline
 import com.androidy.voicereader.tts.IntelligentTtsEngine
 import com.androidy.voicereader.ui.MainActivity
+import dagger.hilt.android.AndroidEntryPoint
 import kotlinx.coroutines.*
 import kotlinx.coroutines.flow.MutableStateFlow
 import kotlinx.coroutines.flow.StateFlow
+import kotlinx.coroutines.flow.first
+import javax.inject.Inject
 
-/**
- * Foreground service that keeps the voice agent running in the background.
- * Coordinates voice listening, screen extraction, LLM analysis, and TTS output.
- */
+@AndroidEntryPoint
 class VoiceAgentService : Service() {
 
     companion object {
@@ -38,13 +37,11 @@ class VoiceAgentService : Service() {
         val isRunning: StateFlow<Boolean> = _isRunning
 
         fun start(context: Context) {
-            val intent = Intent(context, VoiceAgentService::class.java)
-            context.startForegroundService(intent)
+            context.startForegroundService(Intent(context, VoiceAgentService::class.java))
         }
 
         fun stop(context: Context) {
-            val intent = Intent(context, VoiceAgentService::class.java)
-            context.stopService(intent)
+            context.stopService(Intent(context, VoiceAgentService::class.java))
         }
     }
 
@@ -53,15 +50,16 @@ class VoiceAgentService : Service() {
     }
 
     private val binder = LocalBinder()
-    private val scope = CoroutineScope(SupervisorJob() + Dispatchers.Main)
+    // Use Default dispatcher — pipeline work is CPU-bound, not UI
+    private val scope = CoroutineScope(SupervisorJob() + Dispatchers.Default)
 
     private var voiceListener: VoiceCommandListener? = null
     private var pipeline: ReadingPipeline? = null
 
-    // These will be injected from the activity that binds
-    var llmEngine: GemmaLlmEngine? = null
-    var ttsEngine: IntelligentTtsEngine? = null
-    var historyDao: ReadingHistoryDao? = null
+    // Hilt-injected — survives activity death
+    @Inject lateinit var llmEngine: GemmaLlmEngine
+    @Inject lateinit var ttsEngine: IntelligentTtsEngine
+    @Inject lateinit var historyDao: ReadingHistoryDao
 
     private val _agentStatus = MutableStateFlow("Idle")
     val agentStatus: StateFlow<String> = _agentStatus
@@ -80,7 +78,6 @@ class VoiceAgentService : Service() {
 
         startVoiceListening()
         observeCommands()
-        observePipelineState()
 
         return START_STICKY
     }
@@ -102,72 +99,64 @@ class VoiceAgentService : Service() {
         }
     }
 
-    private fun observePipelineState() {
-        scope.launch {
-            pipeline?.pipelineState?.collect { state ->
-                FloatingBubbleService.updateState(FloatingBubbleService.fromPipelineState(state))
-            }
-        }
-    }
-
     private suspend fun handleCommand(command: VoiceCommand) {
-        val llm = llmEngine
-        val tts = ttsEngine
-
-        if (llm == null || tts == null) {
-            _agentStatus.value = "Error: engines not initialized"
-            return
-        }
-
-        // Handle playback control commands immediately (no pipeline needed)
+        // Handle playback control commands immediately
         when (command.type) {
             CommandType.PAUSE -> {
-                tts.pause()
+                ttsEngine.pause()
                 _agentStatus.value = "Paused"
-                updateNotification("Paused")
+                withContext(Dispatchers.Main) { updateNotification("Paused") }
                 return
             }
             CommandType.RESUME -> {
-                tts.resume(scope)
+                ttsEngine.resume(scope)
                 _agentStatus.value = "Resumed reading"
-                updateNotification("Reading...")
+                withContext(Dispatchers.Main) { updateNotification("Reading...") }
                 return
             }
             CommandType.REPLAY -> {
-                tts.replay(scope)
+                ttsEngine.replay(scope)
                 _agentStatus.value = "Replaying"
-                updateNotification("Replaying...")
+                withContext(Dispatchers.Main) { updateNotification("Replaying...") }
                 return
             }
             else -> { /* fall through to pipeline */ }
         }
 
         if (pipeline == null) {
-            pipeline = ReadingPipeline(llm, tts, historyDao)
+            pipeline = ReadingPipeline(llmEngine, ttsEngine, historyDao)
         }
 
         _agentStatus.value = "Processing: \"${command.rawText}\""
-        updateNotification("Processing voice command...")
+        withContext(Dispatchers.Main) { updateNotification("Processing voice command...") }
 
         // Pause voice listening while processing
         voiceListener?.stopListening()
 
         try {
             pipeline?.execute(command, scope)
+
+            // Observe pipeline state for bubble updates
+            scope.launch {
+                pipeline?.pipelineState?.collect { state ->
+                    FloatingBubbleService.updateState(FloatingBubbleService.fromPipelineState(state))
+                }
+            }
+
             _agentStatus.value = "Done reading"
         } catch (e: Exception) {
             Log.e(TAG, "Pipeline error", e)
             _agentStatus.value = "Error: ${e.message}"
         } finally {
-            updateNotification("Listening for commands...")
-            // Resume listening after TTS finishes
+            withContext(Dispatchers.Main) { updateNotification("Listening for commands...") }
+
+            // One-shot wait for TTS to finish, then resume listening — no leaked collector
             scope.launch {
-                tts.isSpeaking.collect { speaking ->
-                    if (!speaking) {
-                        voiceListener?.startListening()
-                        _agentStatus.value = "Listening for voice commands"
-                    }
-                }
+                try {
+                    ttsEngine.isSpeaking.first { !it }
+                } catch (_: Exception) {}
+                voiceListener?.startListening()
+                _agentStatus.value = "Listening for voice commands"
             }
         }
     }
@@ -180,8 +169,7 @@ class VoiceAgentService : Service() {
         ).apply {
             description = getString(R.string.notification_channel_description)
         }
-        val manager = getSystemService(NotificationManager::class.java)
-        manager.createNotificationChannel(channel)
+        getSystemService(NotificationManager::class.java).createNotificationChannel(channel)
     }
 
     private fun createNotification(text: String): Notification {
@@ -190,7 +178,6 @@ class VoiceAgentService : Service() {
             Intent(this, MainActivity::class.java),
             PendingIntent.FLAG_IMMUTABLE or PendingIntent.FLAG_UPDATE_CURRENT
         )
-
         return NotificationCompat.Builder(this, CHANNEL_ID)
             .setContentTitle("Voice Reader")
             .setContentText(text)
@@ -201,13 +188,23 @@ class VoiceAgentService : Service() {
     }
 
     private fun updateNotification(text: String) {
-        val manager = getSystemService(NotificationManager::class.java)
-        manager.notify(NOTIFICATION_ID, createNotification(text))
+        getSystemService(NotificationManager::class.java)
+            .notify(NOTIFICATION_ID, createNotification(text))
+    }
+
+    override fun onTaskRemoved(rootIntent: Intent?) {
+        super.onTaskRemoved(rootIntent)
+        Log.d(TAG, "Task removed — stopping service")
+        stopSelf()
     }
 
     override fun onDestroy() {
         super.onDestroy()
         voiceListener?.stopListening()
+        voiceListener = null
+        pipeline?.stop()
+        pipeline = null
+        ttsEngine.stop()
         scope.cancel()
         _isRunning.value = false
         _agentStatus.value = "Stopped"

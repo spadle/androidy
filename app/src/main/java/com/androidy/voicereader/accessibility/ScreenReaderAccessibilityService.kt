@@ -3,8 +3,6 @@ package com.androidy.voicereader.accessibility
 import android.accessibilityservice.AccessibilityService
 import android.accessibilityservice.GestureDescription
 import android.graphics.Path
-import android.graphics.Rect
-import android.os.Bundle
 import android.util.Log
 import android.view.accessibility.AccessibilityEvent
 import android.view.accessibility.AccessibilityNodeInfo
@@ -14,31 +12,29 @@ import kotlinx.coroutines.flow.MutableStateFlow
 import kotlinx.coroutines.flow.SharedFlow
 import kotlinx.coroutines.flow.StateFlow
 
-/**
- * Accessibility Service that reads screen content from any app.
- * Extracts text by traversing the view hierarchy and supports
- * scrolling to capture content beyond the visible viewport.
- */
 class ScreenReaderAccessibilityService : AccessibilityService() {
 
-    private val scope = CoroutineScope(SupervisorJob() + Dispatchers.Main)
+    // Use IO dispatcher — extraction is I/O-like work, not UI
+    private val scope = CoroutineScope(SupervisorJob() + Dispatchers.IO)
 
     companion object {
         private const val TAG = "ScreenReaderA11y"
         private const val MAX_SCROLL_ATTEMPTS = 15
         private const val SCROLL_DELAY_MS = 600L
+        private const val MAX_TEXT_LENGTH = 50_000
+        private const val MAX_SEGMENTS = 500
 
         private var instance: ScreenReaderAccessibilityService? = null
 
         private val _isConnected = MutableStateFlow(false)
         val isConnected: StateFlow<Boolean> = _isConnected
 
-        private val _extractedText = MutableSharedFlow<ExtractedContent>(replay = 1)
+        // replay=0: no stale cached results
+        private val _extractedText = MutableSharedFlow<ExtractedContent>(replay = 0)
         val extractedText: SharedFlow<ExtractedContent> = _extractedText
 
         fun getInstance(): ScreenReaderAccessibilityService? = instance
 
-        /** Trigger a full-page text extraction with scrolling. */
         fun requestExtraction() {
             instance?.extractAllVisibleText()
         }
@@ -51,9 +47,7 @@ class ScreenReaderAccessibilityService : AccessibilityService() {
         Log.d(TAG, "Accessibility service connected")
     }
 
-    override fun onAccessibilityEvent(event: AccessibilityEvent?) {
-        // We don't need to react to every event — extraction is on-demand
-    }
+    override fun onAccessibilityEvent(event: AccessibilityEvent?) {}
 
     override fun onInterrupt() {
         Log.d(TAG, "Accessibility service interrupted")
@@ -66,40 +60,46 @@ class ScreenReaderAccessibilityService : AccessibilityService() {
         scope.cancel()
     }
 
-    /**
-     * Extract all text from the current screen, scrolling down to capture
-     * content that extends beyond the visible viewport (e.g., long Facebook posts).
-     */
     fun extractAllVisibleText() {
         scope.launch {
             val allText = mutableListOf<String>()
             val seenTexts = mutableSetOf<String>()
             var scrollAttempts = 0
             var lastTextSnapshot = ""
+            var totalLength = 0
 
-            // First pass: get visible text
-            val initialText = extractCurrentScreenText()
-            allText.addAll(initialText)
-            seenTexts.addAll(initialText)
+            val initialText = withContext(Dispatchers.Main) { extractCurrentScreenText() }
+            for (t in initialText) {
+                if (allText.size >= MAX_SEGMENTS || totalLength >= MAX_TEXT_LENGTH) break
+                allText.add(t)
+                seenTexts.add(t)
+                totalLength += t.length
+            }
             lastTextSnapshot = initialText.joinToString("\n")
 
-            // Scroll and extract until no new content appears
-            while (scrollAttempts < MAX_SCROLL_ATTEMPTS) {
-                val scrolled = performScroll()
+            while (scrollAttempts < MAX_SCROLL_ATTEMPTS &&
+                   totalLength < MAX_TEXT_LENGTH &&
+                   allText.size < MAX_SEGMENTS) {
+
+                val scrolled = withContext(Dispatchers.Main) { performScroll() }
                 if (!scrolled) break
 
                 delay(SCROLL_DELAY_MS)
 
-                val newText = extractCurrentScreenText()
+                val newText = withContext(Dispatchers.Main) { extractCurrentScreenText() }
                 val freshLines = newText.filter { it !in seenTexts }
 
                 if (freshLines.isEmpty()) {
                     scrollAttempts++
-                    if (scrollAttempts >= 3) break // No new content after 3 attempts
+                    if (scrollAttempts >= 3) break
                 } else {
                     scrollAttempts = 0
-                    allText.addAll(freshLines)
-                    seenTexts.addAll(freshLines)
+                    for (t in freshLines) {
+                        if (allText.size >= MAX_SEGMENTS || totalLength >= MAX_TEXT_LENGTH) break
+                        allText.add(t)
+                        seenTexts.add(t)
+                        totalLength += t.length
+                    }
                 }
 
                 val currentSnapshot = newText.joinToString("\n")
@@ -109,16 +109,17 @@ class ScreenReaderAccessibilityService : AccessibilityService() {
 
             val content = ExtractedContent(
                 texts = allText,
-                sourceApp = rootInActiveWindow?.packageName?.toString() ?: "unknown",
+                sourceApp = withContext(Dispatchers.Main) {
+                    rootInActiveWindow?.packageName?.toString() ?: "unknown"
+                },
                 fullText = allText.joinToString("\n")
             )
 
-            Log.d(TAG, "Extracted ${allText.size} text segments from ${content.sourceApp}")
+            Log.d(TAG, "Extracted ${allText.size} segments (${totalLength} chars) from ${content.sourceApp}")
             _extractedText.emit(content)
         }
     }
 
-    /** Traverse the current view tree and collect all text nodes. */
     private fun extractCurrentScreenText(): List<String> {
         val rootNode = rootInActiveWindow ?: return emptyList()
         val texts = mutableListOf<String>()
@@ -128,31 +129,29 @@ class ScreenReaderAccessibilityService : AccessibilityService() {
     }
 
     private fun traverseNode(node: AccessibilityNodeInfo, texts: MutableList<String>) {
-        // Collect text content
+        if (texts.size >= MAX_SEGMENTS) return
+
         val text = node.text?.toString()?.trim()
         if (!text.isNullOrBlank() && text.length > 1) {
             texts.add(text)
         }
 
-        // Also check content description (for images with alt text, etc.)
         val desc = node.contentDescription?.toString()?.trim()
         if (!desc.isNullOrBlank() && desc.length > 1 && desc != text) {
             texts.add("[Image: $desc]")
         }
 
-        // Recurse into children
         for (i in 0 until node.childCount) {
+            if (texts.size >= MAX_SEGMENTS) break
             val child = node.getChild(i) ?: continue
             traverseNode(child, texts)
             child.recycle()
         }
     }
 
-    /** Perform a scroll-down gesture on the current screen. */
     private fun performScroll(): Boolean {
         val rootNode = rootInActiveWindow ?: return false
 
-        // Try to find a scrollable node first
         val scrollable = findScrollableNode(rootNode)
         if (scrollable != null) {
             val result = scrollable.performAction(AccessibilityNodeInfo.ACTION_SCROLL_FORWARD)
@@ -162,8 +161,6 @@ class ScreenReaderAccessibilityService : AccessibilityService() {
         }
 
         rootNode.recycle()
-
-        // Fallback: use gesture-based scroll
         return performScrollGesture()
     }
 
@@ -183,19 +180,14 @@ class ScreenReaderAccessibilityService : AccessibilityService() {
     }
 
     private fun performScrollGesture(): Boolean {
-        val displayMetrics = resources.displayMetrics
-        val screenWidth = displayMetrics.widthPixels
-        val screenHeight = displayMetrics.heightPixels
-
+        val dm = resources.displayMetrics
         val path = Path().apply {
-            moveTo(screenWidth / 2f, screenHeight * 0.7f)
-            lineTo(screenWidth / 2f, screenHeight * 0.3f)
+            moveTo(dm.widthPixels / 2f, dm.heightPixels * 0.7f)
+            lineTo(dm.widthPixels / 2f, dm.heightPixels * 0.3f)
         }
-
         val gesture = GestureDescription.Builder()
             .addStroke(GestureDescription.StrokeDescription(path, 0, 300))
             .build()
-
         return dispatchGesture(gesture, null, null)
     }
 }

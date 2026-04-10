@@ -14,6 +14,7 @@ import kotlinx.coroutines.CoroutineScope
 import kotlinx.coroutines.flow.MutableStateFlow
 import kotlinx.coroutines.flow.StateFlow
 import kotlinx.coroutines.flow.first
+import kotlinx.coroutines.flow.onStart
 import kotlinx.coroutines.withTimeoutOrNull
 import org.json.JSONArray
 import org.json.JSONObject
@@ -112,12 +113,11 @@ class ReadingPipeline(
             return null
         }
 
-        // Trigger extraction
-        ScreenReaderAccessibilityService.requestExtraction()
-
-        // Wait for the result with timeout
+        // Subscribe FIRST, then trigger — avoids missing the emission with replay=0
         return withTimeoutOrNull(EXTRACTION_TIMEOUT_MS) {
-            ScreenReaderAccessibilityService.extractedText.first()
+            ScreenReaderAccessibilityService.extractedText
+                .onStart { ScreenReaderAccessibilityService.requestExtraction() }
+                .first()
         }
     }
 

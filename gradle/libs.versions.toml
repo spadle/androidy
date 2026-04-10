@@ -45,10 +45,10 @@ room-compiler = { group = "androidx.room", name = "room-compiler", version.ref =
 litert = { group = "com.google.ai.edge.litert", name = "litert", version.ref = "litert" }
 litert-gpu = { group = "com.google.ai.edge.litert", name = "litert-gpu", version.ref = "litert" }
 
-# LiteRT-LM: LLM-specific layer built on LiteRT, optimized for Gemma 4
+# LiteRT-LM: LLM-specific layer built on LiteRT, optimized for Gemma
 litert-lm = { group = "com.google.ai.edge.litertlm", name = "litertlm-android", version.ref = "litertlm" }
 
-# MediaPipe LLM Inference: kept as fallback (deprecated but still functional)
+# MediaPipe LLM Inference: fallback for wider device support
 mediapipe-llm = { group = "com.google.mediapipe", name = "tasks-genai", version.ref = "mediapipe" }
 
 [plugins]

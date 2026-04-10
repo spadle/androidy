@@ -4,7 +4,7 @@ import android.app.Service
 import android.content.Context
 import android.content.Intent
 import android.graphics.PixelFormat
-import android.os.Build
+import android.graphics.drawable.GradientDrawable
 import android.os.IBinder
 import android.util.Log
 import android.view.Gravity
@@ -92,7 +92,10 @@ class FloatingBubbleService : Service() {
             }
             addView(statusText)
 
-            setBackgroundResource(android.R.drawable.dialog_holo_dark_frame)
+            background = GradientDrawable().apply {
+                setColor(0xCC333333.toInt())
+                cornerRadius = 28f * resources.displayMetrics.density
+            }
         }
 
         val params = WindowManager.LayoutParams(
